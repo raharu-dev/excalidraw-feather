@@ -38,6 +38,17 @@ const createFakeHost = (): ObsidianExcalidrawHostAdapter => ({
   getZoomMax: () => 42,
   isContextMenuDisabled: () => true,
   shouldSyncElementLinkWithText: () => false,
+  getPerformanceConfig: () => ({
+    profile: "high",
+    vectorLod: true,
+    imageLod: true,
+    imageBudgetBytes: 256 * 1024 * 1024,
+    interactionDetail: "reduced",
+    inkOverlay: true,
+    rawPointerUpdates: true,
+    hudEnabled: false,
+  }),
+  reportPerformanceStats: () => {},
   loadFontFromFile: async () => undefined,
   getMermaid: async () => ({
     loaded: false,
@@ -177,11 +188,11 @@ describe("Obsidian Excalidraw host registry", () => {
   it("rejects an unsupported runtime protocol", () => {
     const incompatibleHost = {
       ...createFakeHost(),
-      protocolVersion: 3,
+      protocolVersion: 4,
     } as unknown as ObsidianExcalidrawHostAdapter;
 
     expect(() => configureObsidianExcalidrawHost(incompatibleHost)).toThrow(
-      "Unsupported Obsidian Excalidraw host protocol: 3",
+      "Unsupported Obsidian Excalidraw host protocol: 4",
     );
     expect(getObsidianExcalidrawHost()).toBeNull();
   });

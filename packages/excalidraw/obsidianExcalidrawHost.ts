@@ -13,9 +13,14 @@
  */
 
 import type { MermaidToExcalidrawLibProps } from "./components/TTDDialog/types";
+import type {
+  FeatherPerformanceConfig,
+  FeatherStats,
+} from "./feather/performance";
 
 /** Runtime protocol understood by this version of the Excalidraw package. */
-export const OBSIDIAN_EXCALIDRAW_HOST_PROTOCOL_VERSION = 2 as const;
+// feather -- protocol v3 adds the performance config + diagnostics capabilities
+export const OBSIDIAN_EXCALIDRAW_HOST_PROTOCOL_VERSION = 3 as const;
 
 /** Keyboard-blocking lifecycle returned by the host's inline suggester. */
 export interface ObsidianKeyBlocker {
@@ -37,6 +42,9 @@ export interface ObsidianExcalidrawHostAdapter {
   getZoomMax(): number;
   isContextMenuDisabled(): boolean;
   shouldSyncElementLinkWithText(): boolean;
+  // feather -- live performance configuration and diagnostics reporting
+  getPerformanceConfig(): FeatherPerformanceConfig;
+  reportPerformanceStats(stats: FeatherStats): void;
 
   loadFontFromFile(filename: string): Promise<ArrayBuffer | undefined>;
   getMermaid(): Promise<MermaidToExcalidrawLibProps>;
