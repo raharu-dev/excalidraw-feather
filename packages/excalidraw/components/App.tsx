@@ -456,6 +456,7 @@ import {
   type FeatherStatsCounters,
 } from "../feather/diagnostics";
 import { FeatherHud } from "../feather/FeatherHud";
+import { getImageNaturalSize } from "../feather/imageManager";
 import { getFeatherPerformanceConfig } from "../feather/performance";
 import { getObsidianExcalidrawHost } from "../obsidianExcalidrawHost";
 // feather END
@@ -12134,10 +12135,9 @@ class App extends React.Component<AppProps, AppState> {
                 // to reduce cursor:image drift, we need to take into account
                 // the canvas image element scaling so we can accurately
                 // track the pixels on movement
-                instantDragOffset[0] *=
-                  image.naturalWidth / uncroppedSize.width;
-                instantDragOffset[1] *=
-                  image.naturalHeight / uncroppedSize.height;
+                const imageSize = getImageNaturalSize(image);
+                instantDragOffset[0] *= imageSize.width / uncroppedSize.width;
+                instantDragOffset[1] *= imageSize.height / uncroppedSize.height;
 
                 const [x1, y1, x2, y2, cx, cy] = getElementAbsoluteCoords(
                   croppingElement,
@@ -12184,13 +12184,13 @@ class App extends React.Component<AppProps, AppState> {
                     crop.x -
                       offsetVector[0] * Math.sign(croppingElement.scale[0]),
                     0,
-                    image.naturalWidth - crop.width,
+                    imageSize.width - crop.width,
                   ),
                   y: clamp(
                     crop.y -
                       offsetVector[1] * Math.sign(croppingElement.scale[1]),
                     0,
-                    image.naturalHeight - crop.height,
+                    imageSize.height - crop.height,
                   ),
                 };
 
@@ -13933,7 +13933,7 @@ class App extends React.Component<AppProps, AppState> {
 
   private getImageNaturalDimensions = (
     imageElement: ExcalidrawImageElement,
-    imageHTML: HTMLImageElement,
+    imageHTML: HTMLImageElement | ImageBitmap,
   ) => {
     const minHeight = Math.max(this.state.height - 120, 160);
     // max 65% of canvas height, clamped to <300px, vh - 120px>
@@ -13942,8 +13942,9 @@ class App extends React.Component<AppProps, AppState> {
       Math.floor(this.state.height * 0.5) / this.state.zoom.value,
     );
 
-    const height = Math.min(imageHTML.naturalHeight, maxHeight);
-    const width = height * (imageHTML.naturalWidth / imageHTML.naturalHeight);
+    const imageSize = getImageNaturalSize(imageHTML);
+    const height = Math.min(imageSize.height, maxHeight);
+    const width = height * (imageSize.width / imageSize.height);
 
     // add current imageElement width/height to account for previous centering
     // of the placeholder image
@@ -14727,14 +14728,15 @@ class App extends React.Component<AppProps, AppState> {
           transformHandleType,
         );
 
+        const imageSize = getImageNaturalSize(image);
         this.scene.mutateElement(
           croppingElement,
           cropElement(
             croppingElement,
             this.scene.getNonDeletedElementsMap(),
             transformHandleType,
-            image.naturalWidth,
-            image.naturalHeight,
+            imageSize.width,
+            imageSize.height,
             x + snapOffset.x,
             y + snapOffset.y,
             event.shiftKey

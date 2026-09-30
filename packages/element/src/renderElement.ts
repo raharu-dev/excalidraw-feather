@@ -505,7 +505,8 @@ const drawElementOnCanvas = (
 
       for (const shape of shapes) {
         if (typeof shape === "string") {
-          const { path, fillStyle } = (() => { //zsviczian
+          const { path, fillStyle } = (() => {
+            //zsviczian
             const path = element.customData?.strokeOptions
               ? new Path2D(getFreeDrawSvgPath(element))
               : new Path2D(shape);
@@ -576,14 +577,23 @@ const drawElementOnCanvas = (
           : {
               x: 0,
               y: 0,
-              width: img.naturalWidth,
-              height: img.naturalHeight,
+              // feather -- prefer cache metadata; ImageBitmap previews have no naturalWidth
+              width:
+                cacheEntry?.naturalWidth ??
+                (img as HTMLImageElement).naturalWidth ??
+                (img as ImageBitmap).width,
+              height:
+                cacheEntry?.naturalHeight ??
+                (img as HTMLImageElement).naturalHeight ??
+                (img as ImageBitmap).height,
             };
 
         const shouldInvertImage =
           renderConfig.theme === THEME.DARK &&
-          ((cacheEntry?.mimeType === MIME_TYPES.svg && !element.customData?.doNotInvertSVGInDarkMode) ||
-            (!!element.customData?.pdfPageViewProps && (element.customData?.invertBitmapInDarkmode ?? true)) ||
+          ((cacheEntry?.mimeType === MIME_TYPES.svg &&
+            !element.customData?.doNotInvertSVGInDarkMode) ||
+            (!!element.customData?.pdfPageViewProps &&
+              (element.customData?.invertBitmapInDarkmode ?? true)) ||
             !!element.customData?.invertBitmapInDarkmode); //zsviczian
 
         if (shouldInvertImage && isIOS) {
@@ -1058,9 +1068,14 @@ const drawElement = (
   switch (element.type) {
     case "magicframe":
     case "frame": {
-      if ( //zsviczian
-        appState.frameRendering.enabled && appState.frameRendering.outline &&
-        !(!appState.frameRendering.markerEnabled && element.frameRole === "marker")
+      if (
+        //zsviczian
+        appState.frameRendering.enabled &&
+        appState.frameRendering.outline &&
+        !(
+          !appState.frameRendering.markerEnabled &&
+          element.frameRole === "marker"
+        )
       ) {
         context.save();
         context.translate(
@@ -1095,7 +1110,12 @@ const drawElement = (
           context.setLineDash([dash, gap]);
         }
 
-        if (FRAME_STYLE.radius && context.roundRect && element.frameRole !== "marker") { //zsviczian
+        if (
+          FRAME_STYLE.radius &&
+          context.roundRect &&
+          element.frameRole !== "marker"
+        ) {
+          //zsviczian
           context.beginPath();
           context.roundRect(
             0,

@@ -1272,8 +1272,18 @@ export type AppClassProperties = {
   imageCache: Map<
     FileId,
     {
-      image: HTMLImageElement | Promise<HTMLImageElement>;
+      image:
+        | HTMLImageElement
+        | ImageBitmap
+        | Promise<HTMLImageElement | ImageBitmap>;
       mimeType: ValueOf<typeof IMAGE_MIME_TYPES>;
+      // feather START -- metadata written by the Feather image manager
+      level?: "preview" | "full";
+      naturalWidth?: number;
+      naturalHeight?: number;
+      bytes?: number;
+      lastUsed?: number;
+      // feather END
     }
   >;
   files: BinaryFiles;
@@ -1444,7 +1454,9 @@ export interface ExcalidrawImperativeAPI {
     undo: InstanceType<typeof App>["undo"]; //zsviczian
     redo: InstanceType<typeof App>["redo"]; //zsviczian
   };
-  setForceRenderAllEmbeddables: InstanceType<typeof App>["setForceRenderAllEmbeddables"]; //zsviczian
+  setForceRenderAllEmbeddables: InstanceType<
+    typeof App
+  >["setForceRenderAllEmbeddables"]; //zsviczian
   zoomToFit: InstanceType<typeof App>["zoomToFit"]; //zsviczian
   refreshEditorInterface: InstanceType<typeof App>["refreshEditorInterface"]; //zsviczian
   isTouchScreen: InstanceType<typeof App>["isTouchScreen"]; //zsviczian
