@@ -450,6 +450,16 @@ import {
   getSharedMermaidInstance,
 } from "../obsidianUtils";
 
+// feather START -- diagnostics and HUD integration
+import {
+  FeatherDiagnostics,
+  type FeatherStatsCounters,
+} from "../feather/diagnostics";
+import { FeatherHud } from "../feather/FeatherHud";
+import { getFeatherPerformanceConfig } from "../feather/performance";
+import { getObsidianExcalidrawHost } from "../obsidianExcalidrawHost";
+// feather END
+
 import {
   getColorTargetAppStateUpdates,
   resolveColorTarget,
@@ -672,6 +682,15 @@ class App extends React.Component<AppProps, AppState> {
 
   private excalidrawContainerRef = React.createRef<HTMLDivElement>();
   private zenModeTransitionTimer = 0;
+  // feather START -- per-editor diagnostics, HUD, and host reporting
+  private featherDiagnostics: FeatherDiagnostics | null = null;
+  private featherHud: FeatherHud | null = null;
+  private featherReportInterval: number | null = null;
+  private featherOwnerDocument: Document | null = null;
+  private featherPointerListener = (event: PointerEvent): void => {
+    this.featherDiagnostics?.recordPointer(event);
+  };
+  // feather END
 
   public get ownerDocument(): Document {
     return (
@@ -3997,6 +4016,7 @@ class App extends React.Component<AppProps, AppState> {
 
     this.excalidrawContainerValue.container =
       this.excalidrawContainerRef.current;
+    this.mountFeatherDiagnostics(); // feather
 
     //zsviczian disabling this code
     /*
@@ -4091,7 +4111,110 @@ class App extends React.Component<AppProps, AppState> {
     this.props.onExcalidrawAPI?.(this.api);
   }
 
+  // feather START -- diagnostics lifecycle
+  private mountFeatherDiagnostics(): void {
+    const container = this.excalidrawContainerRef.current;
+    if (!container || this.featherDiagnostics) {
+      return;
+    }
+    const ownerDocument = container.ownerDocument;
+    this.featherOwnerDocument = ownerDocument;
+    this.featherDiagnostics = new FeatherDiagnostics({
+      ownerWindow: this.ownerWindow,
+      getStats: () => ({
+        elementsTotal: this.scene.getNonDeletedElements().length,
+        elementsVisible: this.visibleElements.length,
+        images: this.getFeatherImageCounters(),
+      }),
+    });
+    this.featherDiagnostics.start();
+    ownerDocument.addEventListener(
+      "pointerdown",
+      this.featherPointerListener,
+      true,
+    );
+    ownerDocument.addEventListener(
+      "pointermove",
+      this.featherPointerListener,
+      true,
+    );
+    ownerDocument.addEventListener(
+      "pointerup",
+      this.featherPointerListener,
+      true,
+    );
+
+    if (getFeatherPerformanceConfig().hudEnabled) {
+      this.featherHud = new FeatherHud(ownerDocument, container, () =>
+        this.featherDiagnostics!.snapshot(),
+      );
+      this.featherHud.mount();
+      this.featherReportInterval = this.ownerWindow.setInterval(() => {
+        if (!getFeatherPerformanceConfig().hudEnabled) {
+          return;
+        }
+        getObsidianExcalidrawHost()?.reportPerformanceStats(
+          this.featherDiagnostics!.snapshot(),
+        );
+      }, 1000);
+    }
+  }
+
+  private unmountFeatherDiagnostics(): void {
+    if (this.featherOwnerDocument) {
+      this.featherOwnerDocument.removeEventListener(
+        "pointerdown",
+        this.featherPointerListener,
+        true,
+      );
+      this.featherOwnerDocument.removeEventListener(
+        "pointermove",
+        this.featherPointerListener,
+        true,
+      );
+      this.featherOwnerDocument.removeEventListener(
+        "pointerup",
+        this.featherPointerListener,
+        true,
+      );
+      this.featherOwnerDocument = null;
+    }
+    if (this.featherReportInterval !== null) {
+      this.ownerWindow.clearInterval(this.featherReportInterval);
+      this.featherReportInterval = null;
+    }
+    this.featherHud?.destroy();
+    this.featherHud = null;
+    this.featherDiagnostics?.stop();
+    this.featherDiagnostics = null;
+  }
+
+  private getFeatherImageCounters(): FeatherStatsCounters["images"] {
+    let bytes = 0;
+    let pending = 0;
+    for (const entry of this.imageCache.values()) {
+      const image = entry.image as unknown;
+      if (typeof (image as { then?: unknown } | null)?.then === "function") {
+        pending += 1;
+        continue;
+      }
+      const source = image as HTMLImageElement | ImageBitmap | null;
+      if (!source) {
+        continue;
+      }
+      const width = (source as HTMLImageElement).naturalWidth ?? source.width;
+      const height =
+        (source as HTMLImageElement).naturalHeight ?? source.height;
+      if (typeof width === "number" && typeof height === "number") {
+        bytes += width * height * 4;
+      }
+    }
+    return { entries: this.imageCache.size, bytes, pending };
+  }
+  // feather END
+
   public componentWillUnmount() {
+    this.unmountFeatherDiagnostics(); // feather
     // we're recreating the api object reference so that the
     // <ExcalidrawAPIContext.Provider/> picks up on it
     this.api = { ...this.api, isDestroyed: true };
