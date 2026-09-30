@@ -214,7 +214,12 @@ export class FeatherImageManager {
 
       const cached = this.cache.get(fileId) as FeatherImageEntry | undefined;
       if (!cached) {
-        this.schedule(fileId, () => this.decodePreviewEntry(fileId, file));
+        // SVG cannot be decoded through createImageBitmap in Chromium.
+        if (file.mimeType === "image/svg+xml") {
+          this.schedule(fileId, () => this.decodeFullEntry(fileId, file));
+        } else {
+          this.schedule(fileId, () => this.decodePreviewEntry(fileId, file));
+        }
         continue;
       }
       if (this.pending.has(fileId) || cached.image instanceof Promise) {

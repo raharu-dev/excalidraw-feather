@@ -172,6 +172,7 @@ import {
   maybeParseEmbedSrc,
   getEmbedLink,
   getInitializedImageElements,
+  loadHTMLImageElement,
   normalizeSVG,
   updateImageCache as _updateImageCache,
   getBoundTextElement,
@@ -456,7 +457,13 @@ import {
   type FeatherStatsCounters,
 } from "../feather/diagnostics";
 import { FeatherHud } from "../feather/FeatherHud";
-import { getImageNaturalSize } from "../feather/imageManager";
+import { readImageDimensions } from "../feather/imageDimensions";
+import {
+  FeatherImageManager,
+  getImageNaturalSize,
+  selectVisibleImageFileIds,
+  type FeatherImageCache,
+} from "../feather/imageManager";
 import { getFeatherPerformanceConfig } from "../feather/performance";
 import { getObsidianExcalidrawHost } from "../obsidianExcalidrawHost";
 // feather END
@@ -688,6 +695,9 @@ class App extends React.Component<AppProps, AppState> {
   private featherHud: FeatherHud | null = null;
   private featherReportInterval: number | null = null;
   private featherOwnerDocument: Document | null = null;
+  private featherImageManager: FeatherImageManager | null = null;
+  private featherImageEvictTimer: number | null = null;
+  private featherLastSceneNonce: number | undefined = undefined;
   private featherPointerListener = (event: PointerEvent): void => {
     this.featherDiagnostics?.recordPointer(event);
   };
@@ -3996,6 +4006,8 @@ class App extends React.Component<AppProps, AppState> {
   };
 
   private clearImageShapeCache(filesMap?: BinaryFiles) {
+    // feather -- drop pending viewport decodes as well
+    this.featherImageManager?.cancelPending();
     const files = filesMap ?? this.files;
     this.scene.getNonDeletedElements().forEach((element) => {
       if (isInitializedImageElement(element) && files[element.fileId]) {
@@ -4018,6 +4030,7 @@ class App extends React.Component<AppProps, AppState> {
     this.excalidrawContainerValue.container =
       this.excalidrawContainerRef.current;
     this.mountFeatherDiagnostics(); // feather
+    this.mountFeatherImageManager(); // feather
 
     //zsviczian disabling this code
     /*
@@ -4190,7 +4203,99 @@ class App extends React.Component<AppProps, AppState> {
     this.featherDiagnostics = null;
   }
 
+  // feather START -- image manager lifecycle
+  private mountFeatherImageManager(): void {
+    if (this.featherImageManager) {
+      return;
+    }
+    this.featherImageManager = new FeatherImageManager({
+      cache: this.imageCache as unknown as FeatherImageCache,
+      getConfig: getFeatherPerformanceConfig,
+      decodePreview: async (file, maxEdge) => {
+        const blob = await (await fetch(file.dataURL)).blob();
+        const dimensions = readImageDimensions(file.dataURL);
+        if (
+          dimensions &&
+          Math.max(dimensions.width, dimensions.height) > maxEdge
+        ) {
+          const scale = maxEdge / Math.max(dimensions.width, dimensions.height);
+          return await this.ownerWindow.createImageBitmap(blob, {
+            resizeWidth: Math.max(1, Math.round(dimensions.width * scale)),
+            resizeHeight: Math.max(1, Math.round(dimensions.height * scale)),
+            resizeQuality: "low",
+          });
+        }
+        return await this.ownerWindow.createImageBitmap(blob);
+      },
+      decodeFull: (file) =>
+        loadHTMLImageElement(file.dataURL, () => new this.ownerWindow.Image()),
+      onDecoded: (fileId) => {
+        for (const element of this.scene.getNonDeletedElements()) {
+          if (isInitializedImageElement(element) && element.fileId === fileId) {
+            ShapeCache.delete(element);
+          }
+        }
+        this.scene.triggerUpdate();
+      },
+      onError: (fileId, error) => {
+        console.warn(`[feather] image decode failed: ${String(fileId)}`, error);
+      },
+    });
+    this.scheduleFeatherImageRefresh();
+  }
+
+  private scheduleFeatherImageRefresh = throttle(() => {
+    const manager = this.featherImageManager;
+    if (!manager) {
+      return;
+    }
+    manager.refreshVisible({
+      elements: this.scene.getNonDeletedElements(),
+      elementsMap: this.scene.getNonDeletedElementsMap(),
+      appState: this.state,
+      files: this.files,
+    });
+    this.scheduleFeatherImageEvict();
+  }, 200);
+
+  private scheduleFeatherImageEvict(): void {
+    if (this.featherImageEvictTimer !== null) {
+      this.ownerWindow.clearTimeout(this.featherImageEvictTimer);
+    }
+    this.featherImageEvictTimer = this.ownerWindow.setTimeout(() => {
+      this.featherImageEvictTimer = null;
+      const manager = this.featherImageManager;
+      if (!manager) {
+        return;
+      }
+      manager.evictOffscreen(
+        new Set(
+          selectVisibleImageFileIds({
+            elements: this.scene.getNonDeletedElements(),
+            elementsMap: this.scene.getNonDeletedElementsMap(),
+            appState: this.state,
+            marginPx: 200,
+          }),
+        ),
+      );
+    }, 1000);
+  }
+
+  private unmountFeatherImageManager(): void {
+    this.scheduleFeatherImageRefresh.cancel();
+    if (this.featherImageEvictTimer !== null) {
+      this.ownerWindow.clearTimeout(this.featherImageEvictTimer);
+      this.featherImageEvictTimer = null;
+    }
+    this.featherImageManager?.cancelPending();
+    this.featherImageManager = null;
+  }
+  // feather END
+
   private getFeatherImageCounters(): FeatherStatsCounters["images"] {
+    if (this.featherImageManager) {
+      return this.featherImageManager.stats();
+    }
     let bytes = 0;
     let pending = 0;
     for (const entry of this.imageCache.values()) {
@@ -4216,6 +4321,7 @@ class App extends React.Component<AppProps, AppState> {
 
   public componentWillUnmount() {
     this.unmountFeatherDiagnostics(); // feather
+    this.unmountFeatherImageManager(); // feather
     // we're recreating the api object reference so that the
     // <ExcalidrawAPIContext.Provider/> picks up on it
     this.api = { ...this.api, isDestroyed: true };
@@ -4666,6 +4772,13 @@ class App extends React.Component<AppProps, AppState> {
       return;
     }
 
+    // feather -- refresh viewport-driven image decoding on scene changes
+    const featherSceneNonce = this.scene.getSceneNonce();
+    if (featherSceneNonce !== this.featherLastSceneNonce) {
+      this.featherLastSceneNonce = featherSceneNonce;
+      this.scheduleFeatherImageRefresh();
+    }
+
     // must be updated *before* state change listeners are triggered below
     if (!this._initialized && !this.state.isLoading) {
       this._initialized = true;
@@ -4709,6 +4822,7 @@ class App extends React.Component<AppProps, AppState> {
       prevState.scrollX !== this.state.scrollX ||
       prevState.scrollY !== this.state.scrollY
     ) {
+      this.scheduleFeatherImageRefresh(); // feather
       this.props?.onScrollChange?.(
         this.state.scrollX,
         this.state.scrollY,
@@ -5966,7 +6080,12 @@ class App extends React.Component<AppProps, AppState> {
       this.clearImageShapeCache(addedFiles);
       this.scene.triggerUpdate();
 
-      this.addNewImagesToImageCache();
+      // feather -- with the image manager, decoding is viewport-driven
+      if (this.featherImageManager) {
+        this.scheduleFeatherImageRefresh();
+      } else {
+        this.addNewImagesToImageCache();
+      }
     },
     // zsviczian END
   );
@@ -13832,14 +13951,21 @@ class App extends React.Component<AppProps, AppState> {
           ]);
 
           if (!this.imageCache.get(fileId)) {
-            this.addNewImagesToImageCache();
+            if (this.featherImageManager) {
+              await this.featherImageManager.requestFull(
+                fileId,
+                this.files[fileId],
+              );
+            } else {
+              this.addNewImagesToImageCache();
 
-            const { erroredFiles } = await this.updateImageCache([
-              initializedImageElement,
-            ]);
+              const { erroredFiles } = await this.updateImageCache([
+                initializedImageElement,
+              ]);
 
-            if (erroredFiles.size) {
-              throw new Error("Image cache update resulted with an error.");
+              if (erroredFiles.size) {
+                throw new Error("Image cache update resulted with an error.");
+              }
             }
           }
 
@@ -14009,6 +14135,11 @@ class App extends React.Component<AppProps, AppState> {
     ),
     files: BinaryFiles = this.files,
   ) => {
+    // feather -- with the manager, decoding is viewport-driven
+    if (this.featherImageManager) {
+      this.scheduleFeatherImageRefresh();
+      return;
+    }
     const uncachedImageElements = imageElements.filter(
       (element) => !element.isDeleted && !this.imageCache.has(element.fileId),
     );
@@ -14036,6 +14167,11 @@ class App extends React.Component<AppProps, AppState> {
   /** generally you should use `addNewImagesToImageCache()` directly if you need
    *  to render new images. This is just a failsafe  */
   private scheduleImageRefresh = throttle(() => {
+    // feather -- with the manager, decoding is viewport-driven
+    if (this.featherImageManager) {
+      this.scheduleFeatherImageRefresh();
+      return;
+    }
     this.addNewImagesToImageCache();
   }, IMAGE_RENDER_TIMEOUT);
 

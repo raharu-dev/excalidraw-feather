@@ -3,7 +3,10 @@
 // Author: raharu-dev (Feather fork)
 // References: docs/superpowers/specs/2026-09-30-feather-design.md (workstream 1)
 
+import type { FileId } from "@excalidraw/element/types";
+
 import { DEFAULT_FEATHER_PERFORMANCE_CONFIG } from "./performance";
+
 import {
   estimateImageBytes,
   FeatherImageManager,
@@ -218,6 +221,34 @@ describe("FeatherImageManager", () => {
     expect(started).toBe(0);
   });
 
+  it("bypasses previews for SVG images", async () => {
+    let previews = 0;
+    let fulls = 0;
+    const { manager, cache } = createManager({
+      decodePreview: async () => {
+        previews++;
+        return fakeBitmap();
+      },
+      decodeFull: async () => {
+        fulls++;
+        return fakeImage();
+      },
+    });
+    const elements = [imageElement("e1", "f1", 0, 0)];
+    const args = scene(elements, []);
+    args.files = {
+      f1: { ...file("f1"), mimeType: "image/svg+xml" },
+    } as never;
+
+    manager.refreshVisible(args);
+    await flush();
+
+    expect(previews).toBe(0);
+    expect(fulls).toBe(1);
+    expect(cache.get("f1")!.level).toBe("full");
+    manager.cancelPending();
+  });
+
   it("decodes to completion, records metadata, and reports stats", async () => {
     const { manager, cache, decoded } = createManager({
       decodePreview: async () => fakeBitmap(64, 48),
@@ -287,7 +318,9 @@ describe("FeatherImageManager", () => {
       mimeType: "image/png",
     } as never);
 
-    manager.evictOffscreen(new Set(["v1", "v2"]));
+    manager.evictOffscreen(
+      new Set(["v1", "v2"]) as unknown as ReadonlySet<FileId>,
+    );
 
     expect([...cache.keys()].sort()).toEqual(["v1", "v2"]);
     expect(bitmapA.close).toHaveBeenCalled();
